@@ -49,6 +49,27 @@ def setup_style(root: tk.Tk):
 
     return mono_font, style, has_svttk
 
+# Clic
+def add_context_menu(widget: tk.Widget):
+    """Ajoute un menu clic droit basique (Copier/Couper/Coller/Select all) à un widget texte."""
+    menu = tk.Menu(widget, tearoff=0)
+    menu.add_command(label="Couper", command=lambda: widget.event_generate("<<Cut>>"))
+    menu.add_command(label="Copier", command=lambda: widget.event_generate("<<Copy>>"))
+    menu.add_command(label="Coller", command=lambda: widget.event_generate("<<Paste>>"))
+    menu.add_separator()
+    menu.add_command(label="Tout sélectionner", command=lambda: widget.event_generate("<<SelectAll>>"))
+
+    def show_menu(event):
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+
+    # Clic droit Windows / Linux
+    widget.bind("<Button-3>", show_menu)
+    # Clic droit "Ctrl+click" macOS
+    widget.bind("<Control-Button-1>", show_menu)
+
 
 # GUI
 class CoomGUI:
@@ -108,7 +129,10 @@ class CoomGUI:
         row += 1
         ttk.Label(main, text="User / ID :").grid(row=row, column=0, sticky="w", pady=(6, 0))
         self.user_var = tk.StringVar()
-        ttk.Entry(main, textvariable=self.user_var).grid(row=row, column=1, columnspan=2, sticky="ew")
+        self.user_entry = ttk.Entry(main, textvariable=self.user_var)
+        self.user_entry.grid(row=row, column=1, columnspan=2, sticky="ew")
+        add_context_menu(self.user_entry)
+
 
         # Options
         row += 1
@@ -201,6 +225,8 @@ class CoomGUI:
             bg=bg, fg=fg
         )
         self.log_text.grid(row=0, column=0, sticky="nsew")
+        add_context_menu(self.log_text)
+
 
         scroll = ttk.Scrollbar(logf, command=self.log_text.yview)
         scroll.grid(row=0, column=1, sticky="ns")
