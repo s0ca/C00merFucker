@@ -826,7 +826,7 @@ class CoomGUI:
 
 def main():
     r = tk.Tk()
-    app = C00merFucker(r)
+    app = CoomGUI(r)
     r.minsize(780, 540)
     r.mainloop()
 
