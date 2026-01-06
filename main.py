@@ -234,13 +234,48 @@ def print_progress(status: str, filename: str):
         f"{PROGRESS_DONE}/{TOTAL_DOWNLOADS} ({pct:5.1f}%) - "
         f"{st}: {filename}"
     )
+
+def build_preview_posts(items: List[dict]) -> List[dict]:
+    """
+    items: liste de fichiers (1 item = 1 media)
+    Retour: liste de posts regroupés, avec compteurs video/image
+    """
+    by_post = {}
+
+    for it in items:
+        post_id = str(it.get("post_id") or "")
+        if not post_id:
+            continue
+
+        rec = by_post.get(post_id)
+        if rec is None:
+            rec = by_post[post_id] = {
+                "post_id": post_id,
+                "published": it.get("published") or "",
+                "title": it.get("title") or "",
+                "videos": 0,
+                "images": 0,
+                "other": 0,
+                "total": 0,
+            }
+
+        t = it.get("media_type") or media_type_from_url(it.get("url", ""))
+        if t == "video":
+            rec["videos"] += 1
+        elif t == "image":
+            rec["images"] += 1
+        else:
+            rec["other"] += 1
+        rec["total"] += 1
+
+    # Tri par date desc par défaut (ou laisse le GUI gérer)
+    out = list(by_post.values())
+    out.sort(key=lambda x: x.get("published") or "", reverse=True)
+    return out
+
 # EXTRACTION DES MEDIAS
 
 def extract_media_from_post(post, media_mode: str):
-    """
-    media_mode: 'videos' | 'images' | 'all'
-    Retourne une liste d'items (1 par fichier) avec base {post_id, published, title, url, index}.
-    """
     out = []
     base = {
         "post_id": post.get("id"),
@@ -257,7 +292,14 @@ def extract_media_from_post(post, media_mode: str):
         return is_video(entry) or is_image(entry)
 
     def push(entry, idx):
-        out.append({**base, "url": build_url(entry["path"]), "index": idx})
+        url = build_url(entry["path"])
+        out.append({
+            **base,
+            "url": url,
+            "index": idx,
+            "media_type": media_type_from_url(url)  # "video" / "image" / "other"
+        })
+
 
     idx = 0
 
@@ -699,11 +741,13 @@ def main():
 
     # Mode preview 
     if args.preview:
+        preview_posts = build_preview_posts(all_items)
+
         print("__PREVIEW_JSON_START__")
-        import json
-        print(json.dumps(all_items, ensure_ascii=False))
+        print(json.dumps(preview_posts, ensure_ascii=False))
         print("__PREVIEW_JSON_END__")
         return
+
     
     # Filtrage éventuellement par liste de posts
     if args.only_posts:
