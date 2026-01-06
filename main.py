@@ -43,6 +43,32 @@ def color(txt, col):
 
 STEP = 50
 VIDEO_EXTS = (".mp4", ".webm", ".mov", ".mkv", ".m4v")
+IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".webp", ".gif")
+MEDIA_VIDEO = "video"
+MEDIA_IMAGE = "image"
+MEDIA_OTHER = "other"
+
+def media_type_from_url(url: str) -> str:
+    u = (url or "").lower().split("?", 1)[0]
+    if u.endswith(VIDEO_EXTS):
+        return MEDIA_VIDEO
+    if u.endswith(IMAGE_EXTS):
+        return MEDIA_IMAGE
+    return MEDIA_OTHER
+
+def split_counts_by_url(items: List[dict]) -> dict:
+    c = {"video": 0, "image": 0, "other": 0, "total": 0}
+    for it in items:
+        url = it.get("url") or ""
+        t = media_type_from_url(url)
+        if t == "video":
+            c["video"] += 1
+        elif t == "image":
+            c["image"] += 1
+        else:
+            c["other"] += 1
+        c["total"] += 1
+    return c
 
 HEADERS = {
     "User-Agent": (
@@ -59,6 +85,9 @@ PROGRESS_DONE = 0
 PROGRESS_OK = 0
 PROGRESS_FAIL = 0
 PROGRESS_SKIPPED = 0
+PROGRESS_OK_BY_TYPE = {MEDIA_VIDEO: 0, MEDIA_IMAGE: 0, MEDIA_OTHER: 0}
+PROGRESS_FAIL_BY_TYPE = {MEDIA_VIDEO: 0, MEDIA_IMAGE: 0, MEDIA_OTHER: 0}
+PROGRESS_SKIP_BY_TYPE = {MEDIA_VIDEO: 0, MEDIA_IMAGE: 0, MEDIA_OTHER: 0}
 
 FAILED_URLS: List[str] = []
 SKIPPED_FILES: List[str] = []
@@ -83,6 +112,7 @@ def parse_args():
     parser.add_argument("--sort", choices=["id", "title", "published"], default="published")
     parser.add_argument("--reverse", action="store_true")
     parser.add_argument("--only-posts", type=str, default=None, help="Liste de post_id séparés par des virgules à télécharger uniquement.")
+    parser.add_argument("--media", choices=["videos", "images", "all"], default="videos", help="Type de médias à récupérer: videos (défaut), images, ou all.")
     
     # Shortcuts
     argv = sys.argv[1:]
@@ -90,6 +120,7 @@ def parse_args():
         "-dl": "--download",
         "-mc": "--max-concurrent",
         "-rf": "--retry-forever",
+        "-md": "--media",
         "-ofail": "--only-failed",
     }
     service_alias = {
@@ -145,6 +176,14 @@ def is_video(entry):
         return True
     return any(name.endswith(ext) for ext in VIDEO_EXTS)
 
+def is_image(entry):
+    if not entry:
+        return False
+    name = (entry.get("name") or "").lower()
+    mime = (entry.get("mimetype") or "").lower()
+    if mime.startswith("image/"):
+        return True
+    return any(name.endswith(ext) for ext in IMAGE_EXTS)
 
 def build_url(path: str):
     return "https://coomer.st" + path
@@ -195,9 +234,13 @@ def print_progress(status: str, filename: str):
         f"{PROGRESS_DONE}/{TOTAL_DOWNLOADS} ({pct:5.1f}%) - "
         f"{st}: {filename}"
     )
-# EXTRACTION DES VIDÉOS
+# EXTRACTION DES MEDIAS
 
-def extract_videos_from_post(post):
+def extract_media_from_post(post, media_mode: str):
+    """
+    media_mode: 'videos' | 'images' | 'all'
+    Retourne une liste d'items (1 par fichier) avec base {post_id, published, title, url, index}.
+    """
     out = []
     base = {
         "post_id": post.get("id"),
@@ -205,23 +248,32 @@ def extract_videos_from_post(post):
         "title": post.get("title") or "",
     }
 
-    if is_video(post.get("file")):
-        out.append({**base,
-                    "url": build_url(post["file"]["path"]),
-                    "index": 0})
+    def accept(entry) -> bool:
+        if media_mode == "videos":
+            return is_video(entry)
+        if media_mode == "images":
+            return is_image(entry)
+        # all
+        return is_video(entry) or is_image(entry)
 
-    idx = 1
+    def push(entry, idx):
+        out.append({**base, "url": build_url(entry["path"]), "index": idx})
+
+    idx = 0
+
+    # fichier principal
+    f0 = post.get("file")
+    if f0 and f0.get("path") and accept(f0):
+        push(f0, idx)
+        idx += 1
+
+    # attachments
     for att in post.get("attachments") or []:
-        if is_video(att):
-            out.append({
-                **base,
-                "url": build_url(att["path"]),
-                "index": idx
-            })
+        if att and att.get("path") and accept(att):
+            push(att, idx)
             idx += 1
 
     return out
-
 
 # FILENAME LOGIC
 
@@ -240,7 +292,7 @@ def compute_filename(item):
     base = url.split("?")[0].split("/")[-1]
     _, ext = os.path.splitext(base)
     if not ext:
-        ext = ".mp4"
+        ext = ".bin"
 
     return f"{ts}_{post_id}_{idx:02d}_{title}{ext}"
 
@@ -298,7 +350,7 @@ def fetch_account_label(service, user):
 
 # COLLECTE DES POSTS
 
-def collect_all(service, user):
+def collect_all(service, user, media_mode: str):
     base = f"https://coomer.st/api/v1/{service}/user/{user}/posts?o={{}}"
 
     print(color("=== TEST PAGE 0 ===", C.BLUE))
@@ -339,14 +391,18 @@ def collect_all(service, user):
         print(f"  -> {len(posts)} posts")
 
         for p in posts:
-            vids = extract_videos_from_post(p)
-            all_items.extend(vids)
+            items = extract_media_from_post(p, media_mode)
+            all_items.extend(items)
 
         offset += STEP
         time.sleep(0.4)
 
-    print(color(f"\n[INFO] Total vidéos trouvées : {len(all_items)}", C.GREEN))
+    label = "médias" if media_mode == "all" else ("images" if media_mode == "images" else "vidéos")
+    counts = split_counts_by_url(all_items)
+    print(color(f"\n[INFO] Total médias trouvés : {counts['total']} "f"(vidéos: {counts['video']}, images: {counts['image']}" + (f", autres: {counts['other']}" if counts["other"] else "") + ")", C.GREEN))
+    
     return all_items
+
 
 
 # ASYNC DL
@@ -365,6 +421,7 @@ async def download_one(
 
     url = item["url"]
     filename = item["filename"]
+    mtype = media_type_from_url(url)
     dest = os.path.join(item["download_dir"], filename)
     tmp = dest + ".part"
 
@@ -374,6 +431,7 @@ async def download_one(
         save_state(state_path, state)
         PROGRESS_DONE += 1
         PROGRESS_SKIPPED += 1
+        PROGRESS_SKIP_BY_TYPE[mtype] += 1
         SKIPPED_FILES.append(filename)
         print_progress("SKIP", filename)
         return
@@ -397,6 +455,7 @@ async def download_one(
                         print(color("[ERR] 404 permanent", C.RED))
                         PROGRESS_DONE += 1
                         PROGRESS_FAIL += 1
+                        PROGRESS_FAIL_BY_TYPE[mtype] += 1
                         FAILED_URLS.append(url)
                         print_progress("FAIL404", filename)
                         return
@@ -419,6 +478,7 @@ async def download_one(
 
                 PROGRESS_DONE += 1
                 PROGRESS_OK += 1
+                PROGRESS_OK_BY_TYPE[mtype] += 1
                 OK_FILES.append(filename)
                 print_progress("OK", filename)
                 return
@@ -438,6 +498,7 @@ async def download_one(
                 print(color("[FAIL] Abandon après retries", C.RED))
                 PROGRESS_DONE += 1
                 PROGRESS_FAIL += 1
+                PROGRESS_FAIL_BY_TYPE[mtype] += 1
                 FAILED_URLS.append(url)
                 print_progress("FAIL", filename)
                 return
@@ -524,6 +585,7 @@ def main():
 
     SERVICE = args.service
     USER = args.user
+    MEDIA_MODE = args.media
 
     SORT_KEY = args.sort
     SORT_REVERSE = args.reverse
@@ -542,6 +604,7 @@ def main():
     print("Service :", SERVICE)
     print("User    :", USER)
     print("Download:", DO_DOWNLOAD)
+    print("Media   :", MEDIA_MODE)
     print("Retries :", "∞" if RETRY_FOREVER else MAX_RETRIES)
     print("MaxConc :", MAX_CONC)
     print("Sort    :", SORT_KEY)
@@ -552,8 +615,8 @@ def main():
     # LABEL (nom du compte) + PATHS
 
     label = fetch_account_label(SERVICE, USER) or slugify(USER)
-    DOWNLOAD_DIR = f"videos_{SERVICE}_{label}"
-    STATE_FILE = f"state_{SERVICE}_{label}.json"
+    DOWNLOAD_DIR = f"media_{SERVICE}_{label}_{MEDIA_MODE}"
+    STATE_FILE = f"state_{SERVICE}_{label}_{MEDIA_MODE}.json"
 
     print("Dossier :", DOWNLOAD_DIR)
     print("State   :", STATE_FILE)
@@ -594,6 +657,9 @@ def main():
         # Reset stats
         TOTAL_DOWNLOADS = 0
         PROGRESS_DONE = PROGRESS_OK = PROGRESS_FAIL = PROGRESS_SKIPPED = 0
+        PROGRESS_OK_BY_TYPE.update({MEDIA_VIDEO: 0, MEDIA_IMAGE: 0, MEDIA_OTHER: 0})
+        PROGRESS_FAIL_BY_TYPE.update({MEDIA_VIDEO: 0, MEDIA_IMAGE: 0, MEDIA_OTHER: 0})
+        PROGRESS_SKIP_BY_TYPE.update({MEDIA_VIDEO: 0, MEDIA_IMAGE: 0, MEDIA_OTHER: 0})
         FAILED_URLS.clear()
         SKIPPED_FILES.clear()
         OK_FILES.clear()
@@ -612,6 +678,11 @@ def main():
         print("OK     :", color(PROGRESS_OK, C.GREEN))
         print("Fail   :", color(PROGRESS_FAIL, C.RED))
         print("Skip   :", color(PROGRESS_SKIPPED, C.YELLOW))
+        print(color("\n--- DÉTAIL PAR TYPE ---", C.BOLD))
+        print("Videos  :", color(PROGRESS_OK_BY_TYPE[MEDIA_VIDEO], C.GREEN), "OK /", color(PROGRESS_FAIL_BY_TYPE[MEDIA_VIDEO], C.RED), "Fail /", color(PROGRESS_SKIP_BY_TYPE[MEDIA_VIDEO], C.YELLOW), "Skip")
+        print("Images  :", color(PROGRESS_OK_BY_TYPE[MEDIA_IMAGE], C.GREEN), "OK /", color(PROGRESS_FAIL_BY_TYPE[MEDIA_IMAGE], C.RED), "Fail /", color(PROGRESS_SKIP_BY_TYPE[MEDIA_IMAGE], C.YELLOW), "Skip")
+        if PROGRESS_OK_BY_TYPE[MEDIA_OTHER] or PROGRESS_FAIL_BY_TYPE[MEDIA_OTHER] or PROGRESS_SKIP_BY_TYPE[MEDIA_OTHER]:
+            print("Other   :", color(PROGRESS_OK_BY_TYPE[MEDIA_OTHER], C.GREEN), "OK /", color(PROGRESS_FAIL_BY_TYPE[MEDIA_OTHER], C.RED), "Fail /", color(PROGRESS_SKIP_BY_TYPE[MEDIA_OTHER], C.YELLOW), "Skip")
 
         if FAILED_URLS:
             save_failed_list(STATE_FILE, FAILED_URLS)
@@ -624,7 +695,7 @@ def main():
         return
 
     # MODE NORMAL : collecte complète
-    all_items = collect_all(SERVICE, USER)
+    all_items = collect_all(SERVICE, USER, MEDIA_MODE)
 
     # Mode preview 
     if args.preview:
@@ -672,6 +743,9 @@ def main():
     # Reset stats
     TOTAL_DOWNLOADS = 0
     PROGRESS_DONE = PROGRESS_OK = PROGRESS_FAIL = PROGRESS_SKIPPED = 0
+    PROGRESS_OK_BY_TYPE.update({MEDIA_VIDEO: 0, MEDIA_IMAGE: 0, MEDIA_OTHER: 0})
+    PROGRESS_FAIL_BY_TYPE.update({MEDIA_VIDEO: 0, MEDIA_IMAGE: 0, MEDIA_OTHER: 0})
+    PROGRESS_SKIP_BY_TYPE.update({MEDIA_VIDEO: 0, MEDIA_IMAGE: 0, MEDIA_OTHER: 0})
     FAILED_URLS.clear()
     SKIPPED_FILES.clear()
     OK_FILES.clear()
@@ -690,6 +764,11 @@ def main():
     print("OK     :", color(PROGRESS_OK, C.GREEN))
     print("Fail   :", color(PROGRESS_FAIL, C.RED))
     print("Skip   :", color(PROGRESS_SKIPPED, C.YELLOW))
+    print(color("\n--- DÉTAIL PAR TYPE ---", C.BOLD))
+    print("Videos  :", color(PROGRESS_OK_BY_TYPE[MEDIA_VIDEO], C.GREEN), "OK /", color(PROGRESS_FAIL_BY_TYPE[MEDIA_VIDEO], C.RED), "Fail /", color(PROGRESS_SKIP_BY_TYPE[MEDIA_VIDEO], C.YELLOW), "Skip")
+    print("Images  :", color(PROGRESS_OK_BY_TYPE[MEDIA_IMAGE], C.GREEN), "OK /", color(PROGRESS_FAIL_BY_TYPE[MEDIA_IMAGE], C.RED), "Fail /", color(PROGRESS_SKIP_BY_TYPE[MEDIA_IMAGE], C.YELLOW), "Skip")
+    if PROGRESS_OK_BY_TYPE[MEDIA_OTHER] or PROGRESS_FAIL_BY_TYPE[MEDIA_OTHER] or PROGRESS_SKIP_BY_TYPE[MEDIA_OTHER]:
+        print("Other   :", color(PROGRESS_OK_BY_TYPE[MEDIA_OTHER], C.GREEN), "OK /", color(PROGRESS_FAIL_BY_TYPE[MEDIA_OTHER], C.RED), "Fail /", color(PROGRESS_SKIP_BY_TYPE[MEDIA_OTHER], C.YELLOW), "Skip")
 
     # Gestion du failed.txt
     if FAILED_URLS:
