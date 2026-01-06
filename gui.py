@@ -144,10 +144,17 @@ class CoomGUI:
         self.download_var = tk.BooleanVar(value=True)
         self.only_failed_var = tk.BooleanVar(value=False)
         self.retry_forever_var = tk.BooleanVar(value=False)
+        self.media_var = tk.StringVar(value="videos")
+        media_frame = ttk.Frame(opt)
+        media_frame.grid(row=1, column=0, columnspan=3, sticky="w", pady=(6, 0))
 
         ttk.Checkbutton(opt, text="Download", variable=self.download_var).grid(row=0, column=0, sticky="w")
         ttk.Checkbutton(opt, text="Only failed", variable=self.only_failed_var).grid(row=0, column=1, sticky="w")
         ttk.Checkbutton(opt, text="Retry forever", variable=self.retry_forever_var).grid(row=0, column=2, sticky="w")
+        ttk.Label(media_frame, text="Media:").pack(side="left", padx=(0, 8))
+        ttk.Radiobutton(media_frame, text="Videos", variable=self.media_var, value="videos").pack(side="left", padx=(0, 8))
+        ttk.Radiobutton(media_frame, text="Images", variable=self.media_var, value="images").pack(side="left", padx=(0, 8))
+        ttk.Radiobutton(media_frame, text="All", variable=self.media_var, value="all").pack(side="left")
 
         # Paramètres
         row += 1
@@ -429,6 +436,7 @@ class CoomGUI:
             return
 
         cmd = [sys.executable, "-u", COOM_DL_PATH, "--service", svc, "--user", user]
+        cmd += ["--media", self.media_var.get()]
 
         if self.download_var.get():
             cmd.append("--download")
@@ -578,7 +586,7 @@ class CoomGUI:
             messagebox.showerror("Erreur", "Service ou user manquant.")
             return
 
-        cmd = [sys.executable, COOM_DL_PATH, "--service", svc, "--user", user, "--preview"]
+        cmd = [sys.executable, COOM_DL_PATH, "--service", svc, "--user", user, "--preview", "--media", self.media_var.get()]
 
         try:
             out = subprocess.check_output(cmd, text=True, stderr=subprocess.STDOUT)
