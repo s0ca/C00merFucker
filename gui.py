@@ -637,37 +637,49 @@ class CoomGUI:
         """Affiche une fenêtre avec la liste des posts renvoyés par --preview."""
         win = tk.Toplevel(self.root)
         win.title("Preview des posts")
-        win.geometry("800x500")
+        win.geometry("900x520")
 
         frame = ttk.Frame(win, padding=8)
         frame.pack(fill="both", expand=True)
 
-        cols = ("date", "id", "title", "files")
-        tree = ttk.Treeview(frame, columns=cols, show="headings", selectmode="extended")
-        tree.pack(fill="both", expand=True)
+        cols = ("date", "id", "title", "videos", "images", "total")
+
+        tree_frame = ttk.Frame(frame)
+        tree_frame.pack(fill="both", expand=True)
+
+        tree = ttk.Treeview(tree_frame, columns=cols, show="headings", selectmode="extended")
+        tree.pack(side="left", fill="both", expand=True)
+
+        scroll = ttk.Scrollbar(tree_frame, orient="vertical", command=tree.yview)
+        scroll.pack(side="right", fill="y")
+        tree.configure(yscrollcommand=scroll.set)
 
         tree.heading("date", text="Date")
         tree.heading("id", text="Post ID")
         tree.heading("title", text="Titre")
-        tree.heading("files", text="Fichiers vidéo")
+        tree.heading("videos", text="Vidéos")
+        tree.heading("images", text="Images")
+        tree.heading("total", text="Total")
 
-        tree.column("date", width=100, anchor="w")
-        tree.column("id", width=120, anchor="w")
-        tree.column("title", width=420, anchor="w")
-        tree.column("files", width=80, anchor="center")
+        tree.column("date", width=95, anchor="w")
+        tree.column("id", width=130, anchor="w")
+        tree.column("title", width=520, anchor="w")
+        tree.column("videos", width=70, anchor="center")
+        tree.column("images", width=70, anchor="center")
+        tree.column("total", width=70, anchor="center")
 
-        # Insertion des lignes, on utilise l'index comme iid
         for idx, p in enumerate(posts):
             date = (p.get("published") or "")[:10]
             post_id = str(p.get("post_id") or p.get("id") or "")
             title = (p.get("title") or "").strip()
-            title_short = (title[:70] + "…") if len(title) > 70 else title
-            files_count = p.get("files_count", 1)  # adapte selon ta structure réelle
+            title_short = (title[:90] + "…") if len(title) > 90 else title
 
-            tree.insert("", "end", iid=str(idx),
-                        values=(date, post_id, title_short, files_count))
+            v = int(p.get("videos", 0) or 0)
+            i = int(p.get("images", 0) or 0)
+            t = int(p.get("total", v + i) or (v + i))
 
-        # Boutons sous le Treeview
+            tree.insert("", "end", iid=str(idx), values=(date, post_id, title_short, v, i, t))
+
         btnf = ttk.Frame(frame)
         btnf.pack(fill="x", pady=(8, 0))
 
@@ -680,11 +692,12 @@ class CoomGUI:
 
         close_btn = ttk.Button(btnf, text="Close", command=win.destroy)
         close_btn.pack(side="right")
-        
+
         tree.bind(
             "<Double-1>",
             lambda event, t=tree, pl=posts: self.on_preview_item_double_click(event, t, pl)
         )
+
 
     def download_selected_from_preview(self, posts, tree, win):
         """Récupère les posts sélectionnés dans la preview et lance un run limité à ceux-là."""
@@ -743,15 +756,20 @@ class CoomGUI:
         title = (p.get("title") or "").strip()
         date = p.get("published") or ""
         post_id = str(p.get("post_id") or p.get("id") or "")
-        files_count = p.get("files_count", 1)
+        v = int(p.get("videos", 0) or 0)
+        i = int(p.get("images", 0) or 0)
+        t = int(p.get("total", v + i) or (v + i))
 
         info_lines = [
             f"Service : {svc}",
             f"User    : {user}",
             f"Post ID : {post_id}",
             f"Date    : {date}",
-            f"Fichiers vidéo (approx.) : {files_count}",
+            f"Vidéos  : {v}",
+            f"Images  : {i}",
+            f"Total   : {t}",
         ]
+
 
         if title:
             info_lines.append(f"Titre   : {title}")
